@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# mb-check — validate .multibrain integrity.
+# usage: mb-check [repo-root]      (defaults to cwd)
+# env:   MB_CAP=25  MB_TTL=30
+# exit:  0 clean, 1 hard errors (dead pointer / missing structure)
+set -uo pipefail
+
+ROOT="${1:-.}"
+MB="$ROOT/.multibrain"
+CAP="${MB_CAP:-25}"
+TTL="${MB_TTL:-30}"
+err=0
+warn=0
+
+die() { printf 'FAIL %s\n' "$*"; err=$((err + 1)); }
+wrn() { printf 'WARN %s\n' "$*"; warn=$((warn + 1)); }
+
+[ -f "$MB/session.md" ] || die "missing .multibrain/session.md"
+[ -d "$MB/indexes" ] || die "missing .multibrain/indexes/"
+[ "$err" -eq 0 ] || { printf 'mb-check: %d error(s)\n' "$err"; exit 1; }
+
+grep -q '^## State' "$MB/session.md" || wrn "session.md has no '## State' block"
+
+# --- dead pointers -----------------------------------------------------------
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  case "$p" in
+    .multibrain/*) ;;
+    /*) wrn "absolute pointer (use relative): $p"; continue ;;
+    *) wrn "pointer outside .multibrain/: $p"; continue ;;
+  esac
+  [ -e "$ROOT/$p" ] || die "dead pointer: $p"
+done < <(grep -rho -- '-> [^ `]*' "$MB" 2>/dev/null | sed 's/^-> //')
+
+# --- bucket size + duplicates ------------------------------------------------
+for f in "$MB"/indexes/*.md; do
+  [ -e "$f" ] || continue
+  b=$(basename "$f")
+  n=$(grep -c '^- ' "$f" 2>/dev/null)
+  n=${n:-0}
+  [ "$n" -le "$CAP" ] || wrn "$b: $n entries, cap $CAP — compress oldest half"
+  dups=$(grep '^- ' "$f" | sed -E 's/^- [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} [A-Z]+ — //' | sort | uniq -d)
+  [ -z "$dups" ] || wrn "$b: duplicate entries: $(printf '%s' "$dups" | head -1)"
+done
+
+# --- staleness ---------------------------------------------------------------
+cut=$(date -v-"${TTL}"d +%Y-%m-%d 2>/dev/null || date -d "-${TTL} days" +%Y-%m-%d)
+old=$(grep -rh '^- 20' "$MB/indexes" 2>/dev/null |
+  awk -v c="$cut" 'substr($2,1,10) < c && !/\[stale\]/' | wc -l | tr -d ' ')
+[ "${old:-0}" -eq 0 ] || wrn "$old entries older than ${TTL}d without [stale]"
+
+printf 'mb-check: %d error(s), %d warning(s)\n' "$err" "$warn"
+[ "$err" -eq 0 ]

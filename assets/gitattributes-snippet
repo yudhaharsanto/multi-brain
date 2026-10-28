@@ -1,0 +1,5 @@
+# Multi Brain — merge .multibrain/ without conflicts
+# Prepend-only entries + union merge = both agents' lines survive.
+.multibrain/session.md      merge=union
+.multibrain/indexes/*.md    merge=union
+.multibrain/context/*.md    merge=union
