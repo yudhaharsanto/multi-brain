@@ -22,15 +22,20 @@ wrn() { printf 'WARN %s\n' "$*"; warn=$((warn + 1)); }
 grep -q '^## State' "$MB/session.md" || wrn "session.md has no '## State' block"
 
 # --- dead pointers -----------------------------------------------------------
+# Only tokens that look like a .multibrain path. Prose arrows ("-> none") are ignored.
 while IFS= read -r p; do
   [ -n "$p" ] || continue
-  case "$p" in
-    .multibrain/*) ;;
-    /*) wrn "absolute pointer (use relative): $p"; continue ;;
-    *) wrn "pointer outside .multibrain/: $p"; continue ;;
-  esac
+  case "$p" in *YYYY*|*bucket-name*|*FILE.md*|*topic*) continue ;; esac
   [ -e "$ROOT/$p" ] || die "dead pointer: $p"
-done < <(grep -rho -- '-> [^ `]*' "$MB" 2>/dev/null | sed 's/^-> //')
+done < <(grep -rhoE -- '-> *\.multibrain/[A-Za-z0-9_./-]+' "$MB" 2>/dev/null |
+  sed -E 's/^-> *//; s/[.,;:]*$//' | sort -u)
+
+# Absolute paths are always a mistake.
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  wrn "absolute pointer (use relative): $p"
+done < <(grep -rhoE -- '-> /[A-Za-z0-9_./-]+\.md' "$MB" 2>/dev/null |
+  sed 's/^-> //; s/[.,;:]*$//' | sort -u)
 
 # --- bucket size + duplicates ------------------------------------------------
 for f in "$MB"/indexes/*.md; do
